@@ -1,0 +1,55 @@
+# ===============================================
+# 🔐 Credenciais e Arquivos Sensíveis
+# ===============================================
+.env
+.env.local
+.env.*.local
+
+# Sessões do Telegram (Telethon MTProto)
+*.session
+*.session-journal
+conta.session
+
+# ===============================================
+# 📂 Arquivos de Dados e Logs Gerados em Execução
+# ===============================================
+bot_config.json
+bot_logs.json
+telethon_data.json
+*.tmp
+*.log
+
+# ===============================================
+# 🐍 Python / Cache / Bytecode
+# ===============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+ENV/
+
+# Testes e cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===============================================
+# 💻 IDEs e Editores
+# ===============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===============================================
+# 🖥️ Sistema Operacional
+# ===============================================
+.DS_Store
+Thumbs.db
+outra-coisa-antiinspct-f12
