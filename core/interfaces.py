@@ -6,7 +6,7 @@ Permitem desacoplamento total e testes automatizados com mocks.
 
 import asyncio
 from typing import Protocol, List, Optional, Callable, Awaitable, Dict, Any
-from core.entities import ChannelInfo, JoinRequest, ApprovalResult, LogEntry
+from core.entities import ChannelInfo, JoinRequest, ApprovalResult, LogEntry, AntiSpamSettings
 
 
 class IUserBotGateway(Protocol):
@@ -41,13 +41,14 @@ class IUserBotGateway(Protocol):
     async def approve_all_channel_requests(
         self,
         channel_id: int,
-        approve_delay: float,
-        progress_callback: Optional[Callable[[int, int, int], Awaitable[None]]] = None,
+        approve_delay: float = 1.0,
+        anti_spam: Optional[AntiSpamSettings] = None,
+        progress_callback: Optional[Callable[[int, int, int, Optional[str]], Awaitable[None]]] = None,
         stop_event: Optional[asyncio.Event] = None
     ) -> ApprovalResult:
         """
         Executa a aprovação de todos os pedidos pendentes com paginação segura,
-        delay configurável, callback assíncrono de progresso e cancelamento cooperativo.
+        delays randômicos anti-spam, callback assíncrono de progresso e cancelamento cooperativo.
         """
         ...
 
@@ -58,6 +59,10 @@ class IStorageRepository(Protocol):
     """
     def get_delay(self) -> float: ...
     def set_delay(self, delay: float) -> None: ...
+    def get_anti_spam_settings(self) -> AntiSpamSettings: ...
+    def set_anti_spam_settings(self, settings: AntiSpamSettings) -> None: ...
+    def set_anti_spam_range(self, min_delay: float, max_delay: float) -> None: ...
+    def set_anti_spam_profile(self, profile_name: str) -> bool: ...
     def get_saved_channels(self) -> Dict[str, Dict[str, Any]]: ...
     def add_saved_channel(self, channel_id: int, name: str) -> None: ...
     def remove_saved_channel(self, channel_id: int) -> bool: ...

@@ -5,7 +5,7 @@ Centraliza a estilização visual rica (Markdown e emojis) das respostas do bot.
 
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from core.entities import JoinRequest, ApprovalProgress, ApprovalResult, LogEntry
+from core.entities import JoinRequest, ApprovalProgress, ApprovalResult, LogEntry, AntiSpamSettings
 
 
 def format_welcome(first_name: str) -> str:
@@ -20,11 +20,11 @@ def format_welcome(first_name: str) -> str:
 /aprovar ID - Aprovar pedidos
 /progresso ID - Ver progresso da aprovação
 /parar\\_aprovacao ID - Parar aprovação
-/delay VALOR - Configurar delay entre aprovações
+/delay VALOR - Configurar delay / anti-spam
 /status - Status do sistema
 /logs - Ver logs
 
-🔥 *Sistema de aprovação via bot em background!*"""
+🔥 *Sistema de aprovação via bot em background com Anti-Spam!*"""
 
 
 def format_status(
@@ -33,17 +33,35 @@ def format_status(
     background_tasks_count: int,
     current_delay: float,
     stats: Dict[str, int],
+    anti_spam: Optional[AntiSpamSettings] = None,
 ) -> str:
     userbot_status = "🟢 Conectado" if userbot_connected else "🔴 Desconectado"
     now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    anti_spam_text = ""
+    if anti_spam:
+        mode_labels = {
+            "balanced": "🛡️ Seguro (Equilibrado)",
+            "fast": "⚡ Rápido",
+            "stealth": "🐢 Furtivo (Stealth)",
+            "custom": "🛠️ Personalizado",
+        }
+        label = mode_labels.get(anti_spam.mode, anti_spam.mode.capitalize())
+        pause_txt = f"\n☕ Pausas de lote: a cada {anti_spam.batch_size} membros ({anti_spam.batch_pause_min:.0f}s~{anti_spam.batch_pause_max:.0f}s)" if anti_spam.batch_pause_enabled else ""
+        anti_spam_text = f"""
+🛡️ *MOTOR ANTI-SPAM:*
+⚡ Perfil: {label}
+⏱️ Faixa de Delay: {anti_spam.min_delay:.1f}s ~ {anti_spam.max_delay:.1f}s (Jitter Ativo){pause_txt}
+"""
+
     return f"""📊 *STATUS DO SISTEMA*
 
 🤖 *UserBot:* {userbot_status}
 🔄 *Aprovações Ativas:* {active_approvals_count} canais
 ⚡ *Tarefas em Background:* {background_tasks_count}
-
+{anti_spam_text}
 ⚙️ *CONFIGURAÇÕES:*
-⏱️ Delay entre aprovações: {current_delay}s
+⏱️ Delay médio: {current_delay}s
 
 📈 *ESTATÍSTICAS:*
 ✅ Total de Aprovações: {stats.get('total_approvals', 0)}
@@ -166,28 +184,31 @@ def format_approval_result(channel_name: str, channel_id: int, result: ApprovalR
 🔥 O bot continuou respondendo outros comandos durante todo o processo!"""
 
 
-def format_delay_info(current_delay: float) -> str:
-    return f"""⏱️ *CONFIGURAÇÃO DE DELAY*
+def format_delay_info(current_delay: float, anti_spam: Optional[AntiSpamSettings] = None) -> str:
+    profile_info = ""
+    if anti_spam:
+        profile_info = f"""
+🛡️ *STATUS ANTI-SPAM:*
+⚡ Perfil Atual: *{anti_spam.mode.upper()}*
+⏱️ Faixa Ativa: *{anti_spam.min_delay:.1f}s a {anti_spam.max_delay:.1f}s* (Jitter Randômico)
+☕ Micro-pausa: *{'Ativa (a cada ' + str(anti_spam.batch_size) + ' membros)' if anti_spam.batch_pause_enabled else 'Desativada'}*
+"""
+    return f"""⏱️ *CONFIGURAÇÃO DE DELAY & ANTI-SPAM*
+{profile_info}
+💡 *O motor Anti-Spam protege sua conta variando os segundos entre aprovações para evitar padrões previsíveis que causam FloodWait no Telegram.*
 
-📊 *Delay atual:* {current_delay} segundos
+🚀 *COMANDOS DISPONÍVEIS:*
 
-💡 *O que é o delay?*
-O delay é o tempo de espera entre cada aprovação.
+1️⃣ *Perfis Prontos:*
+• `/delay seguro` - 1.2s a 2.8s (🛡️ Padrão Recomendado)
+• `/delay rapido` - 0.8s a 1.5s (⚡ Mais rápido)
+• `/delay furtivo` - 2.5s a 5.0s (🐢 Ultra-seguro / Stealth)
 
-📝 *Como usar:*
-`/delay VALOR` - Configurar novo delay
+2️⃣ *Faixa Personalizada (Mínimo e Máximo):*
+• `/delay 1.0 3.0` - Varia entre 1.0s e 3.0s
 
-📋 *Exemplos:*
-`/delay 1` - 1 segundo entre aprovações
-`/delay 0.5` - 0.5 segundos (mais rápido)
-`/delay 2` - 2 segundos (mais seguro)
-
-⚠️ *Recomendações:*
-• 0.5 - 1s: Rápido (pode causar flood)
-• 1 - 2s: Equilibrado (recomendado)
-• 2 - 3s: Seguro (mais lento)
-
-🔧 *Valores muito baixos (< 0.1s) podem causar flood!*"""
+3️⃣ *Valor Médio Simples:*
+• `/delay 2` - Média de 2s com variação automática (1.5s ~ 2.7s)"""
 
 
 def format_recent_logs(logs: List[LogEntry]) -> str:

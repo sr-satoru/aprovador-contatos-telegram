@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 # Adicionar raiz ao sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.entities import ChannelInfo, JoinRequest, ApprovalProgress, ApprovalResult, LogEntry
+from core.entities import ChannelInfo, JoinRequest, ApprovalProgress, ApprovalResult, LogEntry, AntiSpamSettings
 from core.config import load_config, _parse_authorized_users, AppConfig, UserBotConfig, BotConfig
 from storage.json_repository import JsonStorageRepository
 from storage.log_buffer import LogBufferRepository
@@ -62,14 +62,18 @@ class MockUserBotGateway:
     async def approve_all_channel_requests(
         self,
         channel_id: int,
-        approve_delay: float,
+        approve_delay: float = 1.0,
+        anti_spam=None,
         progress_callback=None,
         stop_event=None,
     ) -> ApprovalResult:
         if stop_event and stop_event.is_set():
             raise asyncio.CancelledError()
         if progress_callback:
-            await progress_callback(1, 2, 0)
+            try:
+                await progress_callback(1, 2, 0, "Processando...")
+            except TypeError:
+                await progress_callback(1, 2, 0)
         return ApprovalResult(rounds=1, approved=2, failed=0, message="2 pedidos aprovados!")
 
 
@@ -323,6 +327,110 @@ class TestArchitecturalIsolation(unittest.TestCase):
                             content,
                             f"Violação de Arquitetura: {file} em bot/ não deve importar telethon!",
                         )
+
+
+class TestAntiSpam(unittest.IsolatedAsyncioTestCase):
+    """Testes unitários do motor Anti-Spam com delays randômicos e perfis."""
+
+    def test_presets_creation(self):
+        fast = AntiSpamSettings.create_preset("fast")
+        self.assertEqual(fast.mode, "fast")
+        self.assertEqual(fast.min_delay, 0.8)
+        self.assertEqual(fast.max_delay, 1.5)
+
+        balanced = AntiSpamSettings.create_preset("balanced")
+        self.assertEqual(balanced.mode, "balanced")
+        self.assertEqual(balanced.min_delay, 1.2)
+        self.assertEqual(balanced.max_delay, 2.8)
+
+        stealth = AntiSpamSettings.create_preset("stealth")
+        self.assertEqual(stealth.mode, "stealth")
+        self.assertEqual(stealth.min_delay, 2.5)
+        self.assertEqual(stealth.max_delay, 5.0)
+
+    def test_random_delay_within_bounds(self):
+        settings = AntiSpamSettings(min_delay=1.0, max_delay=3.0)
+        for _ in range(50):
+            d = settings.get_approval_delay()
+            self.assertGreaterEqual(d, 1.0)
+            self.assertLessEqual(d, 3.0)
+
+    def test_batch_pause_within_bounds(self):
+        settings = AntiSpamSettings(batch_pause_min=4.0, batch_pause_max=8.0)
+        for _ in range(50):
+            p = settings.get_batch_pause()
+            self.assertGreaterEqual(p, 4.0)
+            self.assertLessEqual(p, 8.0)
+
+    def test_storage_anti_spam_integration(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, "test_config.json")
+            repo = JsonStorageRepository(path)
+
+            # Default profile is balanced
+            anti_spam = repo.get_anti_spam_settings()
+            self.assertEqual(anti_spam.mode, "balanced")
+            self.assertEqual(anti_spam.min_delay, 1.2)
+            self.assertEqual(anti_spam.max_delay, 2.8)
+
+            # Switch to fast profile
+            repo.set_anti_spam_profile("fast")
+            anti_spam = repo.get_anti_spam_settings()
+            self.assertEqual(anti_spam.mode, "fast")
+            self.assertEqual(anti_spam.min_delay, 0.8)
+            self.assertEqual(anti_spam.max_delay, 1.5)
+
+            # Switch to stealth profile
+            repo.set_anti_spam_profile("stealth")
+            anti_spam = repo.get_anti_spam_settings()
+            self.assertEqual(anti_spam.mode, "stealth")
+            self.assertEqual(anti_spam.min_delay, 2.5)
+
+            # Custom range
+            repo.set_anti_spam_range(1.5, 3.5)
+            anti_spam = repo.get_anti_spam_settings()
+            self.assertEqual(anti_spam.mode, "custom")
+            self.assertEqual(anti_spam.min_delay, 1.5)
+            self.assertEqual(anti_spam.max_delay, 3.5)
+
+            # Single value delay automatically creates jitter
+            repo.set_delay(2.0)
+            anti_spam = repo.get_anti_spam_settings()
+            self.assertEqual(anti_spam.min_delay, 1.5)
+            self.assertEqual(anti_spam.max_delay, 2.7)
+
+    async def test_delay_command_bot_handler(self):
+        from bot.handlers.admin import delay_command
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = os.path.join(tmp_dir, "config.json")
+            logs_path = os.path.join(tmp_dir, "logs.json")
+            storage = JsonStorageRepository(config_path)
+            logs = LogBufferRepository(logs_path)
+
+            update = MagicMock()
+            update.effective_user.id = 12345
+            update.message.reply_text = AsyncMock()
+
+            context = MagicMock()
+            context.bot_data = {
+                "authorized_users": [12345],
+                "storage": storage,
+                "logs": logs,
+            }
+
+            # 1. /delay rapido
+            context.args = ["rapido"]
+            await delay_command(update, context)
+            self.assertEqual(storage.get_anti_spam_settings().mode, "fast")
+            update.message.reply_text.assert_called()
+
+            # 2. /delay 1.0 2.5
+            context.args = ["1.0", "2.5"]
+            await delay_command(update, context)
+            settings = storage.get_anti_spam_settings()
+            self.assertEqual(settings.min_delay, 1.0)
+            self.assertEqual(settings.max_delay, 2.5)
 
 
 if __name__ == "__main__":

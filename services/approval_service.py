@@ -110,20 +110,27 @@ class ApprovalService:
                 status="Processando aprovações...",
             )
 
+            anti_spam = self._storage.get_anti_spam_settings()
             delay = self._storage.get_delay()
 
-            async def progress_cb(rounds: int, approved: int, failed: int):
+            self._logs.add_log(
+                f"Aprovação em background: {channel_name} ({channel_id}) "
+                f"[Anti-Spam: {anti_spam.mode} | {anti_spam.min_delay}s~{anti_spam.max_delay}s]"
+            )
+
+            async def progress_cb(rounds: int, approved: int, failed: int, status: Optional[str] = None):
                 self._progress.update_progress(
                     channel_id=channel_id,
                     rounds=rounds,
                     approved=approved,
                     failed=failed,
-                    status="Processando...",
+                    status=status or "Processando...",
                 )
 
             result = await self._gateway.approve_all_channel_requests(
                 channel_id=channel_id,
                 approve_delay=delay,
+                anti_spam=anti_spam,
                 progress_callback=progress_cb,
                 stop_event=stop_event,
             )

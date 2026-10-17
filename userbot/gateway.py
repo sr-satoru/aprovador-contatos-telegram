@@ -15,7 +15,7 @@ from telethon.tl.functions.messages import (
 from telethon.tl.types import InputUserEmpty, InputUser, Channel, User
 from telethon.errors import FloodWaitError
 
-from core.entities import ChannelInfo, JoinRequest, ApprovalResult
+from core.entities import ChannelInfo, JoinRequest, ApprovalResult, AntiSpamSettings
 from core.interfaces import IUserBotGateway
 from core.exceptions import (
     UserBotNotConnectedError,
@@ -161,19 +161,36 @@ class TelethonUserBotGateway(IUserBotGateway):
     async def approve_all_channel_requests(
         self,
         channel_id: int,
-        approve_delay: float,
-        progress_callback: Optional[Callable[[int, int, int], Awaitable[None]]] = None,
+        approve_delay: float = 1.0,
+        anti_spam: Optional[AntiSpamSettings] = None,
+        progress_callback: Optional[Callable[[int, int, int, Optional[str]], Awaitable[None]]] = None,
         stop_event: Optional[asyncio.Event] = None,
     ) -> ApprovalResult:
         client = await self._manager.get_client()
         entity = await self._resolve_entity(channel_id)
+
+        # Se anti_spam não for passado, derivar do approve_delay
+        if anti_spam is None:
+            low = max(0.1, approve_delay * 0.75)
+            high = max(low, approve_delay * 1.35)
+            anti_spam = AntiSpamSettings(min_delay=low, max_delay=high, mode="custom")
 
         approved_total = 0
         failed_total = 0
         round_count = 0
         max_rounds = 50
 
-        logger.info(f"Iniciando aprovação em massa para o canal: {entity.title} ({channel_id})")
+        logger.info(
+            f"Iniciando aprovação anti-spam para o canal: {entity.title} ({channel_id}) "
+            f"[Perfil: {anti_spam.mode} | Faixa: {anti_spam.min_delay:.1f}s ~ {anti_spam.max_delay:.1f}s]"
+        )
+
+        async def notify_progress(status: Optional[str] = None):
+            if progress_callback:
+                try:
+                    await progress_callback(round_count, approved_total, failed_total, status)
+                except TypeError:
+                    await progress_callback(round_count, approved_total, failed_total)
 
         while round_count < max_rounds:
             if stop_event and stop_event.is_set():
@@ -198,7 +215,7 @@ class TelethonUserBotGateway(IUserBotGateway):
 
                 for req in pending_list:
                     if stop_event and stop_event.is_set():
-                        raise ApprovalCancelledError(f"Aprovação cancelada durante a execução.")
+                        raise ApprovalCancelledError("Aprovação cancelada durante a execução.")
 
                     try:
                         await client(
@@ -215,7 +232,6 @@ class TelethonUserBotGateway(IUserBotGateway):
                         if fwe.seconds > 120:
                             raise FloodWaitTimeoutError(fwe.seconds)
                         await asyncio.sleep(fwe.seconds)
-                        # Re-tentar aprovar este usuário
                         try:
                             await client(
                                 HideChatJoinRequestRequest(
@@ -236,14 +252,38 @@ class TelethonUserBotGateway(IUserBotGateway):
                             logger.error(f"Erro ao aprovar usuário {req.user_id}: {e}")
                             failed_total += 1
 
-                    if progress_callback:
-                        await progress_callback(round_count, approved_total, failed_total)
+                    # Micro-pausa anti-spam de lote
+                    if (
+                        anti_spam.batch_pause_enabled
+                        and approved_total > 0
+                        and (approved_total % anti_spam.batch_size == 0)
+                    ):
+                        pause_time = anti_spam.get_batch_pause()
+                        logger.info(f"🛡️ Anti-Spam: Micro-pausa de {pause_time:.1f}s após {approved_total} aprovações.")
+                        await notify_progress(f"Micro-pausa anti-spam ({pause_time:.1f}s)...")
+                        
+                        # Espera dividida para respeitar cancelamento imediato
+                        steps = int(pause_time / 0.5)
+                        for _ in range(steps):
+                            if stop_event and stop_event.is_set():
+                                raise ApprovalCancelledError("Aprovação cancelada durante micro-pausa.")
+                            await asyncio.sleep(0.5)
+                        rem = pause_time - (steps * 0.5)
+                        if rem > 0:
+                            await asyncio.sleep(rem)
+                        
+                        await notify_progress("Processando...")
+                    else:
+                        await notify_progress("Processando...")
+                        # Delay randômico unitário (jitter)
+                        jitter = anti_spam.get_approval_delay()
+                        if jitter > 0:
+                            await asyncio.sleep(jitter)
 
-                    if approve_delay > 0:
-                        await asyncio.sleep(approve_delay)
-
-                # Delay entre rodadas para estabilidade
-                await asyncio.sleep(1.5)
+                # Pausa randômica entre rodadas de paginação
+                round_pause = anti_spam.get_round_delay()
+                logger.info(f"Pausa entre rodadas: {round_pause:.1f}s")
+                await asyncio.sleep(round_pause)
 
             except ApprovalCancelledError:
                 raise

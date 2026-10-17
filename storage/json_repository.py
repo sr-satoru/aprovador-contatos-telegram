@@ -9,6 +9,8 @@ import threading
 import logging
 from typing import Dict, Any, List
 
+from core.entities import AntiSpamSettings
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +30,7 @@ class JsonStorageRepository:
             "settings": {
                 "approve_delay": self._default_delay,
                 "log_level": "INFO",
+                "anti_spam": AntiSpamSettings.create_preset("balanced").to_dict(),
             },
             "statistics": {
                 "total_commands": 0,
@@ -70,8 +73,48 @@ class JsonStorageRepository:
 
     def set_delay(self, delay: float) -> None:
         with self._lock:
-            self._data["settings"]["approve_delay"] = max(0.0, float(delay))
+            d = max(0.1, float(delay))
+            self._data["settings"]["approve_delay"] = d
+            # Ajustar faixa anti-spam com variação automática em torno do delay informado
+            anti_spam_data = self._data["settings"].get("anti_spam", {})
+            settings = AntiSpamSettings.from_dict(anti_spam_data)
+            settings.mode = "custom"
+            settings.min_delay = round(max(0.2, d * 0.75), 2)
+            settings.max_delay = round(d * 1.35, 2)
+            self._data["settings"]["anti_spam"] = settings.to_dict()
             self._save()
+
+    def get_anti_spam_settings(self) -> AntiSpamSettings:
+        with self._lock:
+            raw = self._data.get("settings", {}).get("anti_spam")
+            return AntiSpamSettings.from_dict(raw)
+
+    def set_anti_spam_settings(self, settings: AntiSpamSettings) -> None:
+        with self._lock:
+            self._data["settings"]["anti_spam"] = settings.to_dict()
+            self._data["settings"]["approve_delay"] = round((settings.min_delay + settings.max_delay) / 2.0, 2)
+            self._save()
+
+    def set_anti_spam_range(self, min_delay: float, max_delay: float) -> None:
+        with self._lock:
+            raw = self._data.get("settings", {}).get("anti_spam")
+            settings = AntiSpamSettings.from_dict(raw)
+            low = round(max(0.1, min(min_delay, max_delay)), 2)
+            high = round(max(0.1, max(min_delay, max_delay)), 2)
+            settings.min_delay = low
+            settings.max_delay = high
+            settings.mode = "custom"
+            self._data["settings"]["anti_spam"] = settings.to_dict()
+            self._data["settings"]["approve_delay"] = round((low + high) / 2.0, 2)
+            self._save()
+
+    def set_anti_spam_profile(self, profile_name: str) -> bool:
+        with self._lock:
+            settings = AntiSpamSettings.create_preset(profile_name)
+            self._data["settings"]["anti_spam"] = settings.to_dict()
+            self._data["settings"]["approve_delay"] = round((settings.min_delay + settings.max_delay) / 2.0, 2)
+            self._save()
+            return True
 
     def get_saved_channels(self) -> Dict[str, Dict[str, Any]]:
         with self._lock:

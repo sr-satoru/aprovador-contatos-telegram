@@ -212,13 +212,26 @@ Envie os comandos diretamente no chat privado com o seu bot:
 | `/aprovar <ID>` | Inicia confirmação para aprovação em lote em background | `/aprovar -1001234567890` |
 | `/progresso <ID>` | Acompanha em tempo real rodadas, aprovados e falhas | `/progresso -1001234567890` |
 | `/parar_aprovacao <ID>` | Interrompe imediatamente uma aprovação ativa do canal | `/parar_aprovacao -1001234567890` |
-| `/delay [VALOR]` | Consulta ou altera o delay entre aprovações (em segundos) | `/delay 1.5` |
+| `/delay [PERFIL/VALOR]` | Consulta ou altera perfil e faixa anti-spam randômica | `/delay seguro` ou `/delay 1.0 3.0` |
 | `/logs` | Exibe os logs mais recentes de operações e erros | `/logs` |
+
+### 🛡️ Motor Anti-Spam & Delays Randômicos:
+O sistema já vem de fábrica pré-configurado no perfil **🛡️ Seguro (`balanced`)**, aplicando:
+- **Jitter Randômico**: Cada aprovação recebe um delay aleatório entre `1.2s` e `2.8s` (eliminando a cadência previsível robótica).
+- **Micro-Pausas de Lote**: Pausa automática de `4s` a `8s` a cada 20 membros aprovados.
+- **Pausa entre Rodadas**: Variação aleatória de `2.0s` a `4.5s` entre lotes de paginação do MTProto.
+
+Você pode alternar os perfis ou definir sua própria faixa a qualquer momento pelo chat:
+- `/delay seguro` : 1.2s a 2.8s com micro-pausas (Recomendado/Padrão)
+- `/delay rapido` : 0.8s a 1.5s (Para listas curtas)
+- `/delay furtivo` : 2.5s a 5.0s (Proteção máxima para contas sensíveis)
+- `/delay 1.0 3.0` : Faixa personalizada entre 1.0s e 3.0s
+- `/delay 2` : Média de 2s com variação randômica automática
 
 ### Fluxo de Aprovação:
 1. Digite `/checar_todos ID_DO_CANAL`. O bot exibirá o total de solicitações encontradas.
 2. Digite `/aprovar ID_DO_CANAL`. O bot solicitará confirmação textual.
-3. Responda **SIM** no chat. A aprovação será iniciada em **segundo plano**.
+3. Responda **SIM** no chat. A aprovação será iniciada em **segundo plano** com o motor anti-spam ativo.
 4. **O bot continua respondendo outros comandos normalmente enquanto aprova os membros!**
 5. Você pode acompanhar o progresso a qualquer momento com `/progresso ID_DO_CANAL` ou cancelar com `/parar_aprovacao ID_DO_CANAL`.
 
@@ -226,7 +239,7 @@ Envie os comandos diretamente no chat privado com o seu bot:
 
 ## 🧪 Testes Automatizados
 
-O projeto conta com uma suíte de testes cobrindo entidades, persistência, serviços e garantindo o isolamento arquitetural das camadas:
+O projeto conta com uma suíte de testes cobrindo entidades, persistência, serviços, simulação anti-spam e garantindo o isolamento arquitetural das camadas:
 
 ```bash
 ./.venv/bin/python tests/test_architecture.py
@@ -236,6 +249,7 @@ O projeto conta com uma suíte de testes cobrindo entidades, persistência, serv
 
 ## 🛡️ Tratamento de Falhas e Segurança
 
+- **Motor Anti-Spam com Jitter e Micro-pausas**: Variação randômica realista dos segundos para prevenir detecção heurística pelo Telegram.
 - **FloodWait Automático**: Se o Telegram solicitar espera por excesso de requisições, o motor aguarda o tempo estipulado automaticamente e retoma o processamento.
 - **Tratamento de Exceções**: Solicitações já aceitas por outros administradores (*already handled*) são tratadas sem interromper o fluxo.
 - **Cancelamento Cooperativo**: O comando `/parar_aprovacao` utiliza `asyncio.Event` para encerrar tarefas assíncronas com limpeza garantida de recursos e estado.

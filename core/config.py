@@ -58,12 +58,16 @@ class BotConfig:
         return bool(self.token) and self.token != "SEU_BOT_TOKEN_AQUI" and bool(self.authorized_users)
 
 
+from core.entities import AntiSpamSettings
+
+
 @dataclass(frozen=True)
 class AppConfig:
     """Configurações globais consolidadas da aplicação."""
     userbot: UserBotConfig
     bot: BotConfig
     default_delay: float = 1.0
+    anti_spam: AntiSpamSettings = None
 
 
 def _parse_authorized_users(raw_users: str) -> List[int]:
@@ -105,6 +109,17 @@ def load_config() -> AppConfig:
     except ValueError:
         default_delay = 1.0
 
+    # Configuração do Anti-Spam padrão
+    anti_spam_mode = os.getenv("ANTI_SPAM_MODE", "balanced")
+    preset = AntiSpamSettings.create_preset(anti_spam_mode)
+    try:
+        if "ANTI_SPAM_MIN_DELAY" in os.environ:
+            preset.min_delay = float(os.getenv("ANTI_SPAM_MIN_DELAY"))
+        if "ANTI_SPAM_MAX_DELAY" in os.environ:
+            preset.max_delay = float(os.getenv("ANTI_SPAM_MAX_DELAY"))
+    except ValueError:
+        pass
+
     return AppConfig(
         userbot=UserBotConfig(
             api_id=api_id,
@@ -120,4 +135,5 @@ def load_config() -> AppConfig:
             logs_file=logs_file,
         ),
         default_delay=default_delay,
+        anti_spam=preset,
     )
