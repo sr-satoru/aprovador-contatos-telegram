@@ -37,9 +37,13 @@ class ChannelService:
         """Remove canal do repositório."""
         return self._storage.remove_saved_channel(channel_id)
 
-    async def check_channel_requests(self, channel_id: int) -> List[JoinRequest]:
+    async def check_channel_requests(
+        self, channel_id: int, track_links: bool = False
+    ) -> List[JoinRequest]:
         """Busca todas as solicitações pendentes e salva lista para aprovação futura."""
-        requests = await self._gateway.fetch_pending_requests(channel_id)
+        requests = await self._gateway.fetch_pending_requests(
+            channel_id, track_links=track_links
+        )
         if requests:
             user_ids = [r.user_id for r in requests]
             self._storage.set_last_checked(channel_id, user_ids)

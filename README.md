@@ -97,6 +97,7 @@ flowchart TD
 ├── services/                # Casos de Uso e Orquestração
 │   ├── approval_service.py  # Gestão assíncrona de aprovações em background
 │   ├── channel_service.py   # Gerenciamento de canais e checagens
+│   ├── report_service.py    # Geração e fatiamento de planilhas CSV a cada 100 leads
 │   └── progress_tracker.py  # Rastreamento de progresso em memória
 │
 ├── storage/                 # Camada de Persistência
@@ -208,12 +209,27 @@ Envie os comandos diretamente no chat privado com o seu bot:
 | `/status` | Exibe status da conexão, tarefas ativas e estatísticas | `/status` |
 | `/add_canal <ID>` | Adiciona e valida um novo canal pelo ID ou `@username` | `/add_canal -1001234567890` |
 | `/canais` | Lista todos os canais cadastrados e seu status atual | `/canais` |
-| `/checar_todos <ID>` | Busca todos os pedidos pendentes com pré-visualização | `/checar_todos -1001234567890` |
+| `/checar_todos <ID>` | Pergunta se deseja gerar planilhas e busca pedidos pendentes | `/checar_todos -1001234567890` |
 | `/aprovar <ID>` | Inicia confirmação para aprovação em lote em background | `/aprovar -1001234567890` |
 | `/progresso <ID>` | Acompanha em tempo real rodadas, aprovados e falhas | `/progresso -1001234567890` |
 | `/parar_aprovacao <ID>` | Interrompe imediatamente uma aprovação ativa do canal | `/parar_aprovacao -1001234567890` |
 | `/delay [PERFIL/VALOR]` | Consulta ou altera perfil e faixa anti-spam randômica | `/delay seguro` ou `/delay 1.0 3.0` |
 | `/logs` | Exibe os logs mais recentes de operações e erros | `/logs` |
+
+### 📊 Relatório de Leads & Link Tracker:
+Ao executar `/checar_todos ID_DO_CANAL`, o bot apresenta botões interativos:
+- `[📊 Sim, com Planilha (a cada 100)]`
+- `[⚡ Não, Apenas Checar]`
+
+Ao clicar em **SIM**:
+- 🔗 **Rastreamento de Link**: Identifica exatamente por qual link de convite / campanha o usuário solicitou entrada.
+- ⏰ **Data e Hora**: Registra o momento exato em que a solicitação de entrada foi feita.
+- ⭐ **Telegram Premium**: Detecta se o usuário é assinante Telegram Premium.
+- 📑 **Fatiamento Automático**: A cada **100 membros**, o bot gera um arquivo CSV independente (`leads_canal_lote_X_100membros.csv`) e envia os documentos diretamente no Telegram.
+- 🗂️ **Compatibilidade Excel**: Codificado em `UTF-8-SIG` com delimitador `;` para abrir direto no Microsoft Excel e Google Planilhas sem caracteres corrompidos.
+
+Ao clicar em **NÃO**:
+- O bot realiza a checagem rápida tradicional diretamente na tela sem gerar arquivos.
 
 ### 🛡️ Motor Anti-Spam & Delays Randômicos:
 O sistema já vem de fábrica pré-configurado no perfil **🛡️ Seguro (`balanced`)**, aplicando:
@@ -229,11 +245,12 @@ Você pode alternar os perfis ou definir sua própria faixa a qualquer momento p
 - `/delay 2` : Média de 2s com variação randômica automática
 
 ### Fluxo de Aprovação:
-1. Digite `/checar_todos ID_DO_CANAL`. O bot exibirá o total de solicitações encontradas.
-2. Digite `/aprovar ID_DO_CANAL`. O bot solicitará confirmação textual.
-3. Responda **SIM** no chat. A aprovação será iniciada em **segundo plano** com o motor anti-spam ativo.
-4. **O bot continua respondendo outros comandos normalmente enquanto aprova os membros!**
-5. Você pode acompanhar o progresso a qualquer momento com `/progresso ID_DO_CANAL` ou cancelar com `/parar_aprovacao ID_DO_CANAL`.
+1. Digite `/checar_todos ID_DO_CANAL`. O bot pergunta se você quer gerar relatórios em planilhas ou apenas checar.
+2. Escolha **Sim** ou **Não** no botão. As planilhas (se solicitadas) são enviadas no chat e a lista de pedidos é salva.
+3. Digite `/aprovar ID_DO_CANAL`. O bot solicitará confirmação textual.
+4. Responda **SIM** no chat. A aprovação será iniciada em **segundo plano** com o motor anti-spam ativo.
+5. **O bot continua respondendo outros comandos normalmente enquanto aprova os membros!**
+6. Você pode acompanhar o progresso a qualquer momento com `/progresso ID_DO_CANAL` ou cancelar com `/parar_aprovacao ID_DO_CANAL`.
 
 ---
 

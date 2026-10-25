@@ -15,6 +15,7 @@ from userbot.gateway import TelethonUserBotGateway
 from services.progress_tracker import ProgressTracker
 from services.channel_service import ChannelService
 from services.approval_service import ApprovalService
+from services.report_service import ReportService
 from bot.app import create_bot_app
 
 # Configuração de logging
@@ -62,6 +63,7 @@ def main():
         log_repository=logs,
         progress_tracker=progress_tracker,
     )
+    report_service = ReportService()
 
     # 5. Criar e Configurar Aplicação do Bot
     try:
@@ -73,6 +75,7 @@ def main():
             channel_service=channel_service,
             approval_service=approval_service,
             progress_tracker=progress_tracker,
+            report_service=report_service,
         )
     except Exception as e:
         logger.error(f"Falha ao configurar a aplicação do bot: {e}")

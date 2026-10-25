@@ -22,6 +22,7 @@ from storage.log_buffer import LogBufferRepository
 from services.progress_tracker import ProgressTracker
 from services.channel_service import ChannelService
 from services.approval_service import ApprovalService
+from services.report_service import ReportService
 from bot import formatters
 from bot.middlewares import check_authorized
 
@@ -31,6 +32,7 @@ class MockUserBotGateway:
 
     def __init__(self):
         self.is_auth = True
+        self.last_track_links = False
         self.channel_to_return = ChannelInfo(
             id=12345,
             title="Canal de Teste",
@@ -56,7 +58,10 @@ class MockUserBotGateway:
     async def get_channel_info(self, channel_id: int | str) -> Optional[ChannelInfo]:
         return self.channel_to_return
 
-    async def fetch_pending_requests(self, channel_id: int, limit: Optional[int] = None) -> List[JoinRequest]:
+    async def fetch_pending_requests(
+        self, channel_id: int, limit: Optional[int] = None, track_links: bool = False
+    ) -> List[JoinRequest]:
+        self.last_track_links = track_links
         return self.requests_to_return
 
     async def approve_all_channel_requests(
@@ -90,6 +95,27 @@ class TestEntities(unittest.TestCase):
         d = req.to_dict()
         self.assertEqual(d["user_id"], 555)
         self.assertEqual(d["user_name"], "Vanir")
+        self.assertIsNone(d["invite_link"])
+        self.assertFalse(d["is_premium"])
+
+    def test_join_request_with_tracking_fields(self):
+        req = JoinRequest(
+            user_id=777,
+            user_name="Lead Premium",
+            username="lead_vip",
+            date=datetime(2026, 10, 17, 12, 0, 0),
+            invite_link="https://t.me/+campanha_abc",
+            invite_title="Campanha Google Ads",
+            is_premium=True,
+            about="Interesse no plano anual",
+        )
+        d = req.to_dict()
+        self.assertEqual(d["user_id"], 777)
+        self.assertEqual(d["invite_link"], "https://t.me/+campanha_abc")
+        self.assertEqual(d["invite_title"], "Campanha Google Ads")
+        self.assertTrue(d["is_premium"])
+        self.assertEqual(d["about"], "Interesse no plano anual")
+        self.assertIn("2026-10-17", d["date"])
 
     def test_approval_progress_serialization(self):
         prog = ApprovalProgress(
@@ -110,6 +136,63 @@ class TestEntities(unittest.TestCase):
         d = entry.to_dict()
         self.assertEqual(d["level"], "INFO")
         self.assertEqual(d["message"], "Teste")
+
+
+class TestReportService(unittest.TestCase):
+    def test_generate_csv_batches_splits_every_100_members(self):
+        service = ReportService()
+        requests = [
+            JoinRequest(
+                user_id=1000 + i,
+                user_name=f"Lead {i}",
+                username=f"lead_{i}" if i % 2 == 0 else None,
+                date=datetime(2026, 10, 17, 14, 30, 0),
+                invite_link=f"https://t.me/+link_{i % 5}",
+                invite_title=f"Campanha {i % 5}",
+                is_premium=(i % 3 == 0),
+                about="Quero entrar no canal!",
+            )
+            for i in range(250)
+        ]
+
+        batches = service.generate_csv_batches(requests, channel_title="Super VIP", batch_size=100)
+
+        # 250 itens divididos em lotes de 100 devem gerar 3 arquivos (100, 100, 50)
+        self.assertEqual(len(batches), 3)
+
+        # Validar primeiro lote
+        name_1, content_1 = batches[0]
+        self.assertEqual(name_1, "leads_Super_VIP_lote_1_100membros.csv")
+        text_1 = content_1.decode("utf-8-sig")
+        lines_1 = text_1.strip().split("\r\n" if "\r\n" in text_1 else "\n")
+        self.assertEqual(len(lines_1), 101)  # 1 cabeçalho + 100 linhas
+        self.assertIn("ID do Usuário;Nome Completo;Username (@);Link de Convite Utilizado", lines_1[0])
+        self.assertIn("Sim", text_1)
+        self.assertIn("https://t.me/+link_0", text_1)
+
+        # Validar segundo lote
+        name_2, content_2 = batches[1]
+        self.assertEqual(name_2, "leads_Super_VIP_lote_2_100membros.csv")
+        text_2 = content_2.decode("utf-8-sig")
+        lines_2 = text_2.strip().split("\r\n" if "\r\n" in text_2 else "\n")
+        self.assertEqual(len(lines_2), 101)
+
+        # Validar terceiro lote (restante 50)
+        name_3, content_3 = batches[2]
+        self.assertEqual(name_3, "leads_Super_VIP_lote_3_50membros.csv")
+        text_3 = content_3.decode("utf-8-sig")
+        lines_3 = text_3.strip().split("\r\n" if "\r\n" in text_3 else "\n")
+        self.assertEqual(len(lines_3), 51)  # 1 cabeçalho + 50 linhas
+
+    def test_generate_csv_batches_empty_list(self):
+        service = ReportService()
+        batches = service.generate_csv_batches([], channel_title="Vazio")
+        self.assertEqual(batches, [])
+
+    def test_sanitize_filename(self):
+        service = ReportService()
+        sanitized = service._sanitize_filename("  Canal VIP & Promoções 2026!!  ")
+        self.assertEqual(sanitized, "Canal_VIP_Promoções_2026")
 
 
 class TestConfig(unittest.TestCase):
@@ -209,10 +292,17 @@ class TestServices(unittest.IsolatedAsyncioTestCase):
 
         requests = await service.check_channel_requests(12345)
         self.assertEqual(len(requests), 2)
+        self.assertFalse(self.gateway.last_track_links)
         self.assertEqual(service.get_pending_user_ids(12345), [101, 102])
 
         service.clear_pending_user_ids(12345)
         self.assertEqual(service.get_pending_user_ids(12345), [])
+
+    async def test_channel_service_with_track_links(self):
+        service = ChannelService(self.gateway, self.storage)
+        requests = await service.check_channel_requests(12345, track_links=True)
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(self.gateway.last_track_links)
 
     async def test_approval_service(self):
         service = ApprovalService(self.gateway, self.storage, self.logs, self.tracker)

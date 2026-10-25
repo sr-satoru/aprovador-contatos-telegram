@@ -225,3 +225,23 @@ def format_recent_logs(logs: List[LogEntry]) -> str:
         emoji = level_emojis.get(log.level, "📝")
         text += f"{emoji} `{timestamp}` {log.message}\n"
     return text
+
+
+def format_check_tracker_prompt(channel_name: str, channel_id: int) -> str:
+    """Mensagem interativa perguntando se o usuário deseja gerar planilhas e rastrear links."""
+    return f"""📊 *RELATÓRIO DE LEADS & TRACKER*
+
+🎯 *Canal:* {channel_name}
+🆔 *ID:* `{channel_id}`
+
+Deseja gerar **relatório em planilhas** durante a checagem?
+
+✨ *Ao escolher SIM:*
+• Rastreia o **link de convite / campanha** que o lead usou
+• Registra **data e hora exata** da solicitação
+• Detecta status de **Telegram Premium**
+• Divide e envia **1 planilha CSV a cada 100 membros** (pronta p/ Excel)
+
+⚡ *Ao escolher NÃO:*
+• Realiza apenas a checagem rápida de pedidos na tela."""
+

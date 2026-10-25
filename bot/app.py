@@ -4,12 +4,20 @@ Configura a Application do python-telegram-bot, registra handlers e injeta depen
 """
 
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from typing import Optional
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+)
 from core.config import AppConfig
 from core.interfaces import IUserBotGateway, IStorageRepository, ILogRepository
 from services.channel_service import ChannelService
 from services.approval_service import ApprovalService
 from services.progress_tracker import ProgressTracker
+from services.report_service import ReportService
 from bot.handlers.admin import start_command, status_command, delay_command, logs_command
 from bot.handlers.channels import add_canal_command, canais_command
 from bot.handlers.approvals import (
@@ -18,6 +26,7 @@ from bot.handlers.approvals import (
     progresso_command,
     parar_aprovacao_command,
     handle_text_confirmation,
+    handle_check_report_callback,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +40,7 @@ def create_bot_app(
     channel_service: ChannelService,
     approval_service: ApprovalService,
     progress_tracker: ProgressTracker,
+    report_service: Optional[ReportService] = None,
 ) -> Application:
     """Cria e configura a Application do python-telegram-bot com injeção de dependência."""
     if not config.bot.is_configured():
@@ -48,6 +58,7 @@ def create_bot_app(
     app.bot_data["channel_service"] = channel_service
     app.bot_data["approval_service"] = approval_service
     app.bot_data["progress_tracker"] = progress_tracker
+    app.bot_data["report_service"] = report_service or ReportService()
 
     # Registro de Handlers de Comandos
     app.add_handler(CommandHandler("start", start_command))
@@ -63,7 +74,8 @@ def create_bot_app(
     app.add_handler(CommandHandler("progresso", progresso_command))
     app.add_handler(CommandHandler("parar_aprovacao", parar_aprovacao_command))
 
-    # Handler para confirmação via texto (SIM / NAO)
+    # Handlers interativos (Callback Query para Planilha / Text para Confirmação)
+    app.add_handler(CallbackQueryHandler(handle_check_report_callback, pattern=r"^check_report:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_confirmation))
 
     logger.info("Bot Controller configurado e handlers registrados com sucesso.")

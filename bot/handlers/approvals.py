@@ -3,7 +3,8 @@ Handlers de Aprovação de Pedidos - Clean Architecture (Presentation Layer)
 Comandos: /checar_todos, /aprovar, /progresso, /parar_aprovacao e confirmação textual.
 """
 
-from telegram import Update
+import logging
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from bot.middlewares import check_authorized
 from bot import formatters
@@ -12,11 +13,14 @@ from core.entities import ApprovalResult
 from services.channel_service import ChannelService
 from services.approval_service import ApprovalService
 from services.progress_tracker import ProgressTracker
+from services.report_service import ReportService
+
+logger = logging.getLogger(__name__)
 
 
 @check_authorized
 async def checar_todos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /checar_todos ID - Busca todos os pedidos pendentes do canal."""
+    """Comando /checar_todos ID - Pergunta se deseja gerar planilha e checar pedidos."""
     if not context.args:
         await update.message.reply_text(
             "📋 *VERIFICAR PEDIDOS*\n\n"
@@ -34,9 +38,7 @@ async def checar_todos_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     approval_service: ApprovalService = context.bot_data["approval_service"]
-    channel_service: ChannelService = context.bot_data["channel_service"]
     gateway: IUserBotGateway = context.bot_data["gateway"]
-    logs: ILogRepository = context.bot_data["logs"]
 
     if approval_service.is_channel_running(channel_id):
         await update.message.reply_text(
@@ -44,19 +46,130 @@ async def checar_todos_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    await update.message.reply_text("🔍 *Buscando pedidos pendentes via UserBot...*", parse_mode="Markdown")
-
     try:
         info = await gateway.get_channel_info(channel_id)
         channel_name = info.title if info else f"Canal {channel_id}"
 
-        requests = await channel_service.check_channel_requests(channel_id)
+        prompt_text = formatters.format_check_tracker_prompt(channel_name, channel_id)
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📊 Sim, com Planilha (a cada 100)",
+                        callback_data=f"check_report:yes:{channel_id}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⚡ Não, Apenas Checar",
+                        callback_data=f"check_report:no:{channel_id}",
+                    )
+                ],
+            ]
+        )
+
+        await update.message.reply_text(
+            prompt_text,
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"Erro ao preparar checagem do canal {channel_id}: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Erro ao acessar canal: {e}")
+
+
+@check_authorized
+async def handle_check_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa o clique nos botões de relatório em planilha (Sim ou Não)."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data or ""
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "check_report":
+        return
+
+    choice = parts[1]  # 'yes' ou 'no'
+    try:
+        channel_id = int(parts[2])
+    except ValueError:
+        return
+
+    approval_service: ApprovalService = context.bot_data["approval_service"]
+    channel_service: ChannelService = context.bot_data["channel_service"]
+    gateway: IUserBotGateway = context.bot_data["gateway"]
+    report_service: ReportService = context.bot_data["report_service"]
+    logs: ILogRepository = context.bot_data["logs"]
+
+    if approval_service.is_channel_running(channel_id):
+        await query.edit_message_text(
+            f"⚠️ Canal está com aprovação em background! Use `/progresso {channel_id}` para ver o status."
+        )
+        return
+
+    info = await gateway.get_channel_info(channel_id)
+    channel_name = info.title if info else f"Canal {channel_id}"
+
+    with_report = (choice == "yes")
+
+    if with_report:
+        await query.edit_message_text(
+            f"🔍 *Iniciando checagem avançada com rastreamento de links...*\n\n"
+            f"🎯 Canal: *{channel_name}*\n"
+            f"⏳ Aguarde enquanto mapeamos os convites e pedidos pendentes...",
+            parse_mode="Markdown",
+        )
+    else:
+        await query.edit_message_text(
+            f"🔍 *Buscando pedidos pendentes via UserBot (modo rápido)...*\n\n"
+            f"🎯 Canal: *{channel_name}*",
+            parse_mode="Markdown",
+        )
+
+    try:
+        requests = await channel_service.check_channel_requests(channel_id, track_links=with_report)
+        mode_label = "com planilha" if with_report else "simples"
+        logs.add_log(f"Verificação ({mode_label}): {len(requests)} pedidos no canal {channel_name} ({channel_id})")
+
+        if not requests:
+            await query.message.reply_text(
+                f"📋 *RESULTADO - VERIFICAÇÃO*\n\n"
+                f"🎯 Canal: *{channel_name}*\n"
+                f"🆔 ID: `{channel_id}`\n\n"
+                f"⚠️ *0 pedidos pendentes encontrados!*",
+                parse_mode="Markdown",
+            )
+            return
+
+        # Se escolheu gerar relatório em planilhas a cada 100 pessoas
+        if with_report:
+            batches = report_service.generate_csv_batches(requests, channel_name, batch_size=100)
+            total_batches = len(batches)
+
+            await query.message.reply_text(
+                f"📊 *GERANDO RELATÓRIO DE LEADS*\n\n"
+                f"👥 Total de Pedidos: *{len(requests)}*\n"
+                f"📁 Planilhas geradas (a cada 100): *{total_batches} arquivo(s)*\n\n"
+                f"⏳ Enviando arquivos...",
+                parse_mode="Markdown",
+            )
+
+            for idx, (filename, csv_bytes) in enumerate(batches, 1):
+                caption = f"📄 Lote {idx}/{total_batches} ({min(idx * 100, len(requests))} membros) - {channel_name}"
+                await query.message.reply_document(
+                    document=csv_bytes,
+                    filename=filename,
+                    caption=caption,
+                )
+
+        # Resumo visual com instrução para /aprovar
         text = formatters.format_pending_requests(channel_name, channel_id, requests)
-        logs.add_log(f"Verificação: {len(requests)} pedidos no canal {channel_name} ({channel_id})")
-        await update.message.reply_text(text)
+        await query.message.reply_text(text)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao verificar pedidos: {e}")
+        logger.error(f"Erro ao verificar pedidos do canal {channel_id}: {e}", exc_info=True)
+        await query.message.reply_text(f"❌ Erro ao verificar pedidos: {e}")
+
 
 
 @check_authorized

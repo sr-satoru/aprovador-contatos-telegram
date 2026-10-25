@@ -6,11 +6,13 @@ Isola completamente detalhes de baixo nível e chamadas RPC do Telegram.
 
 import asyncio
 import logging
-from typing import List, Optional, Callable, Awaitable
+from typing import List, Optional, Callable, Awaitable, Dict, Tuple
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.messages import (
     HideChatJoinRequestRequest,
     GetChatInviteImportersRequest,
+    GetExportedChatInvitesRequest,
+    GetAdminsWithInvitesRequest,
 )
 from telethon.tl.types import InputUserEmpty, InputUser, Channel, User
 from telethon.errors import FloodWaitError
@@ -89,7 +91,7 @@ class TelethonUserBotGateway(IUserBotGateway):
         )
 
     async def fetch_pending_requests(
-        self, channel_id: int, limit: Optional[int] = None
+        self, channel_id: int, limit: Optional[int] = None, track_links: bool = False
     ) -> List[JoinRequest]:
         client = await self._manager.get_client()
         entity = await self._resolve_entity(channel_id)
@@ -100,6 +102,55 @@ class TelethonUserBotGateway(IUserBotGateway):
         offset_user = InputUserEmpty()
         batch_count = 0
         max_batches = 100  # Limite de segurança
+
+        # Mapeamento user_id -> (invite_link, invite_title)
+        tracked_links_by_user: Dict[int, Tuple[Optional[str], Optional[str]]] = {}
+
+        if track_links:
+            logger.info(f"Rastreamento de links ativado para o canal {entity.title} ({channel_id}). Escaneando links...")
+            try:
+                admins_resp = await client(GetAdminsWithInvitesRequest(peer=entity))
+                admin_items = getattr(admins_resp, "admins", [])
+                for admin in admin_items:
+                    try:
+                        admin_entity = await client.get_input_entity(admin.admin_id)
+                        exported_invites = await client(
+                            GetExportedChatInvitesRequest(
+                                peer=entity,
+                                admin_id=admin_entity,
+                                limit=100,
+                            )
+                        )
+                        for invite in getattr(exported_invites, "invites", []):
+                            inv_link = getattr(invite, "link", None)
+                            inv_title = getattr(invite, "title", None)
+                            if not inv_link:
+                                continue
+
+                            req_count = getattr(invite, "requested", None)
+                            if req_count is not None and req_count == 0:
+                                continue
+
+                            try:
+                                link_importers_resp = await client(
+                                    GetChatInviteImportersRequest(
+                                        peer=entity,
+                                        link=inv_link,
+                                        requested=True,
+                                        limit=limit_per_batch,
+                                        offset_date=None,
+                                        offset_user=InputUserEmpty(),
+                                    )
+                                )
+                                for imp in getattr(link_importers_resp, "importers", []):
+                                    tracked_links_by_user[imp.user_id] = (inv_link, inv_title)
+                            except Exception as link_err:
+                                logger.debug(f"Não foi possível buscar importers do link {inv_link}: {link_err}")
+                    except Exception as admin_err:
+                        logger.debug(f"Erro ao buscar convites do admin {admin.admin_id}: {admin_err}")
+                logger.info(f"Rastreamento de links concluído: {len(tracked_links_by_user)} usuários mapeados.")
+            except Exception as e:
+                logger.warning(f"Aviso ao escanear links de convite do canal {channel_id}: {e}")
 
         logger.info(f"Buscando solicitações de entrada pendentes para o canal {entity.title} ({channel_id})...")
 
@@ -129,6 +180,9 @@ class TelethonUserBotGateway(IUserBotGateway):
                         else f"Usuário {importer.user_id}"
                     )
                     username = user_info.username if user_info else None
+                    is_premium = bool(getattr(user_info, "premium", False)) if user_info else False
+
+                    inv_link, inv_title = tracked_links_by_user.get(importer.user_id, (None, None))
 
                     all_requests.append(
                         JoinRequest(
@@ -137,6 +191,9 @@ class TelethonUserBotGateway(IUserBotGateway):
                             username=username,
                             date=importer.date,
                             about=getattr(importer, "about", "") or "",
+                            invite_link=inv_link,
+                            invite_title=inv_title,
+                            is_premium=is_premium,
                         )
                     )
 

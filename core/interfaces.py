@@ -33,9 +33,10 @@ class IUserBotGateway(Protocol):
     async def fetch_pending_requests(
         self,
         channel_id: int,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        track_links: bool = False,
     ) -> List[JoinRequest]:
-        """Busca todas as solicitações de entrada pendentes de um canal."""
+        """Busca solicitações de entrada pendentes com opção de rastreamento de links."""
         ...
 
     async def approve_all_channel_requests(

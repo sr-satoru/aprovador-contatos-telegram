@@ -39,6 +39,9 @@ class JoinRequest:
     username: Optional[str] = None
     date: Optional[datetime] = None
     about: str = ""
+    invite_link: Optional[str] = None
+    invite_title: Optional[str] = None
+    is_premium: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -47,6 +50,9 @@ class JoinRequest:
             "username": self.username,
             "date": self.date.isoformat() if self.date else None,
             "about": self.about,
+            "invite_link": self.invite_link,
+            "invite_title": self.invite_title,
+            "is_premium": self.is_premium,
         }
 
 
